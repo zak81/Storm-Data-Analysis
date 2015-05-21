@@ -1,0 +1,269 @@
+# Storm events impacting health and economy
+
+## Synopsis:
+#####In my analysis of storm events data, I used NOAA Storm Database obtained from (https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).  I used RStudio to create all documents, including a preprocessed data.  My goal is to obtain a lean data with key variables that I need for answering a question - "What is the most hazardous events impacting health and economy?"  Key variable I focused on were fatality counts, injury counts, property damage estimate and crop damage estimate.  Since not all event names are entered as one of 48 storm event name given in [Storm Data Event Table 2.1.1](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf), I need to fix and change event names to match it.  In the process, I made some assumptions when the name was ambiguous.  I deleted events titled "Other" or other names that didn't belong to any of the 48 events.  There will be sections below for Data Processing, which shows the codes and description of the process.  Results are shown at the end of my report.
+
+## Data Processing:
+
+#### Loading the data
+##### Load the R-packages dplyr, ggplot2 and reshape2
+```{r, echo=TRUE}
+suppressPackageStartupMessages(library(dplyr))
+library(ggplot2)
+library(reshape2)
+```
+
+##### The data comes in the form of comma-separated-value file compressed via the bzip2 algorithm.  Download, extract and read into a new data frame.
+```{r, echo=TRUE}
+inputdata_url <- "http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+inputdata_file <- "repdata-data-StormData.csv.bz2"
+
+if(!file.exists("repdata-data-StormData.csv.bz2")) {
+        download.file(inputdata_url, inputdata_file)
+}
+
+StormData <- read.csv(bzfile(inputdata_file))
+```
+#### Preprocessing the data
+##### Look at the summary statistics and dimension. Look at first 6 lines.
+```{r, echo=TRUE}
+summary(StormData)
+dim(StormData)
+head(StormData)
+```
+##### Look at the number of types of event names in EVTYPE. There are 985 events in this data. 
+```{r, echo=TRUE}
+length(levels(StormData$EVTYPE))
+```
+##### Out of 37 variables, I picked out EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG and CROPDMGEXP for my analysis. EVTYPE defines the type of storm event, FATALITIES and INJURIES define number of fatalities and injuries caused as a result of an event, PROPDMG and PROPDMGEXP define cost incurred from property damage, and CROPDMG AND CROPDMGEXP define cost incurred from crop damage.
+##### Check for NA values. No NA found in FATALITIES, INJURIES, PROPDMG and CROPDMG
+```{r, echo=TRUE}
+sum(is.na(StormData$FATALITIES))
+sum(is.na(StormData$INJURIES))
+sum(is.na(StormData$PROPDMG))
+sum(is.na(StormData$CROPDMG))
+```
+##### Check for units in PROPDMGEXP and CROPDMGEXP. Values of the damage are reported in dollar and those values with units are in hundreds(H), thousands(K), millions(M) and billions(B). 
+```{r, echo=TRUE}
+levels(StormData$PROPDMGEXP[StormData$PROPDMGEXP])
+levels(StormData$CROPDMGEXP[StormData$CROPDMGEXP])
+```
+##### I can check to see if events with undefined damage units have values. Event with "?" as a unit doesn't have a property damage value recorded. Question can be asked if the value should be $3, $3K, $3M or $3B? Since it's difficult to make assumption without having additional information about the events in question, I'm going to leave all undefined units as "1".
+```{r, echo=TRUE}
+head(filter(StormData, PROPDMGEXP=="" & PROPDMG!=0), 2)
+head(filter(StormData, PROPDMGEXP=="?" & PROPDMG!=0), 2)
+head(filter(StormData, CROPDMGEXP=="" & CROPDMG!=0), 2)
+head(filter(StormData, CROPDMGEXP=="?" & CROPDMG!=0), 2)
+```
+##### I'll convert the units into numerical values by assigning numerical values to each factor in PROPDMGEXP and CROPDMGEXP.
+```{r, echo=TRUE}
+levels(StormData$PROPDMGEXP) <- c("1","1","1","1","1","1","1","1","1","1","1","1","1","1000000000","100","100","1000","1000000","1000000")
+levels(StormData$CROPDMGEXP) <- c("1","1","1","1","1000000000","1000","1000","1000000","1000000")
+```
+##### Create new variables to store damage estimates.
+```{r, echo=TRUE}
+StormData <- StormData %>% mutate(PROPDMGEST = PROPDMG * as.numeric(levels(StormData$PROPDMGEXP))[StormData$PROPDMGEXP])
+StormData <- StormData %>% mutate(CROPDMGEST = CROPDMG * as.numeric(levels(StormData$CROPDMGEXP))[StormData$CROPDMGEXP])
+```
+##### Get sum of fatalities, injuries, property damage estimate, crop damage estimate for each event type. Then reorder the rows in descending order by number of fatalities, then by number of injuries.
+```{r, echo=TRUE}
+event_grouped <- StormData %>%
+        group_by(EVTYPE) %>%
+        summarise_each(funs(sum), FATALITIES, INJURIES, PROPDMGEST, CROPDMGEST) %>%
+        arrange(desc(FATALITIES, INJURIES))
+```
+##### See how many events have zero values in 4 variables of interest
+```{r, echo=TRUE}
+count(filter(event_grouped, FATALITIES==0 & INJURIES==0 & PROPDMGEST==0 & CROPDMGEST==0))
+```
+##### Filter out events that result in 0 fatalities, 0 injuries, no property damage estimate and no crop damage estimate. 497 events without fatality, injury, property damage and crop damage are removed from 985 events.
+```{r, echo=TRUE}
+event_filter <- filter(event_grouped, FATALITIES!=0 | INJURIES!=0 | PROPDMGEST!=0 | CROPDMGEST!=0)
+```
+##### Cleaning of the dataset is performed. Refer to [Storm Data Documention](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) for 48 storm events that I'll end up with as a result of combining 497 events names.
+```{r, echo=TRUE}
+event_clean <- event_filter
+event_clean$EVTYPE <- gsub("TORNDAO", "TORNADO", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("tornado", event_clean$EVTYPE, ignore.case=TRUE)] <- "TORNADO"
+event_clean$EVTYPE[grep("excessive.*heat|heat.*excessive|heat wave|extreme heat", event_clean$EVTYPE, ignore.case=TRUE)] <- "EXCESSIVE HEAT"
+event_clean$EVTYPE[grep("flash.*flood|flood.*flash", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLASH FLOOD"
+event_clean$EVTYPE[grep("^heat$", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE <- gsub("LIGNTNING", "LIGHTNING", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("lightning", event_clean$EVTYPE, ignore.case=TRUE)] <- "LIGHTNING"
+event_clean$EVTYPE <- gsub("TSTM", "THUNDERSTORM", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE <- gsub("TUNDERSTORM", "THUNDERSTORM", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("^thunderstorm|^thunderstormw|^severe thunderstorm", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE <- gsub("CSTL", "COASTAL", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("^flood|river.*flood|minor.*flood|urban.*flood|breakup.*flood|rain.*flood|wind.*flood|surf.*flood|ice.*flood|major.*flood|rural.*flood|stream.*flood|snow.*flood|tidal.*flood", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLOOD"
+event_clean$EVTYPE[grep("rip|current", event_clean$EVTYPE, ignore.case=TRUE)] <- "RIP CURRENTS"
+event_clean$EVTYPE[grep("^high wind|hurricane.*wind|winter.*wind|dust.*wind|snow.*high.*wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH WIND"
+event_clean$EVTYPE <- gsub("AVALANCE", "AVALANCHE", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("avalanche", event_clean$EVTYPE, ignore.case=TRUE)] <- "AVALANCHE"
+event_clean$EVTYPE[grep("winter storm", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER STORM"
+event_clean$EVTYPE <- gsub("WINDCHILL", "WIND CHILL", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("extreme.*cold|cold.*extreme|extreme.*chill|record.*cold", event_clean$EVTYPE, ignore.case=TRUE)] <- "EXTREME COLD/WIND CHILL"
+event_clean$EVTYPE[grep("heavy.*snow|snow.*heavy", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY SNOW"
+event_clean$EVTYPE[grep("^strong.*wind|wind.*strong|^ice.*wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "STRONG WIND"
+event_clean$EVTYPE[grep("blizzard", event_clean$EVTYPE, ignore.case=TRUE)] <- "BLIZZARD"
+event_clean$EVTYPE[grep("high.*surf|surf.*high", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH SURF"
+event_clean$EVTYPE[grep("heavy.*rain|rain.*heavy", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY RAIN"
+event_clean$EVTYPE[grep("ice.*storm|storm.*ice", event_clean$EVTYPE, ignore.case=TRUE)] <- "ICE STORM"
+event_clean$EVTYPE[grep("wild.*fire|fire.*wild|wildfire", event_clean$EVTYPE, ignore.case=TRUE)] <- "WILDFIRE"
+event_clean$EVTYPE[grep("hurricane.*typhoon|typhoon.*hurricane|hurricane|typhoon", event_clean$EVTYPE, ignore.case=TRUE)] <- "HURRICANE (TYPHOON)"
+event_clean$EVTYPE[grep("^fog|dense.*fog", event_clean$EVTYPE, ignore.case=TRUE)] <- "DENSE FOG"
+event_clean$EVTYPE[grep("tropical.*storm|storm.*tropical", event_clean$EVTYPE, ignore.case=TRUE)] <- "TROPICAL STORM"
+event_clean$EVTYPE[grep("landslide|land.*slide|slide.*land|debris.*flow|flow.*debris", event_clean$EVTYPE, ignore.case=TRUE)] <- "DEBRIS FLOW"
+event_clean$EVTYPE[grep("^cold|snow.*cold|unseasonabl.*cold|extended.*cold", event_clean$EVTYPE, ignore.case=TRUE)] <- "COLD/WIND CHILL"
+event_clean$EVTYPE[grep("tsunami", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("winter.*weather|weather.*winter", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE[grep("warm.*dry|dry.*warm|^heat", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAT"
+event_clean$EVTYPE <- gsub("FLD", "FLOOD", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("urban.*flood", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLOOD"
+event_clean$EVTYPE[grep("^wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH WIND"
+event_clean$EVTYPE[grep("^hail|wind.*hail|small.*hail", event_clean$EVTYPE, ignore.case=TRUE)] <- "HAIL"
+event_clean$EVTYPE[grep("dust.*storm|storm.*dust", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("marine.*strong.*wind", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("storm.*surge|high.*tide", event_clean$EVTYPE, ignore.case=TRUE)] <- "STORM SURGE/TIDE"
+event_clean$EVTYPE[grep("unseasonabl.*warm", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAT"
+event_clean$EVTYPE[grep("marin.*thunderstorm.*wind", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("rough.*sea", event_clean$EVTYPE, ignore.case=TRUE)] <- "MARINE THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("freez.*rain|sleet", event_clean$EVTYPE, ignore.case=TRUE)] <- "SLEET"
+event_clean$EVTYPE[grep("glaze", event_clean$EVTYPE, ignore.case=TRUE)] <- "FROST/FREEZE"
+event_clean$EVTYPE[grep("heavy.*surf|surf.*heavy", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH SURF"
+event_clean$EVTYPE[grep("low.*temperature|temperature.*low", event_clean$EVTYPE, ignore.case=TRUE)] <- "COLD/WIND CHILL"
+event_clean$EVTYPE[grep("marine.*mishap|mishap.*marine", event_clean$EVTYPE, ignore.case=TRUE)] <- "MARINE THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("high.*seas|seas.*high", event_clean$EVTYPE, ignore.case=TRUE)] <- "STORM SURGE/TIDE"
+event_clean$EVTYPE[grep("icy.*road|road.*icy", event_clean$EVTYPE, ignore.case=TRUE)] <- "FROST/FREEZE"
+event_clean$EVTYPE[grep("rip.*current|current.*rip", event_clean$EVTYPE, ignore.case=TRUE)] <- "RIP CURRENT"
+event_clean$EVTYPE[grep("^snow|blowing.*snow|ice.*snow|light.*snow|falling.*snow|thundersnow|late.*snow|rain.*snow", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE[grep("gusty.*wind|wind.*gusty", event_clean$EVTYPE, ignore.case=TRUE)] <- "STRONG WIND"
+event_clean$EVTYPE[grep("hypothermia|exposure", event_clean$EVTYPE, ignore.case=TRUE)] <- "EXCESSIVE HEAT"
+event_clean$EVTYPE[grep("mudslide|mud.*slide|slide.*mud", event_clean$EVTYPE, ignore.case=TRUE)] <- "DEBRIS FLOW"
+event_clean$EVTYPE[grep("rough.*surf|hazardous.*surf", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH SURF"
+event_clean$EVTYPE[grep("dry.*microburst|microburst.*dry", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("heavy.*sea|sea.*heavy", event_clean$EVTYPE, ignore.case=TRUE)] <- "MARINE THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("high.*water|water.*high", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLASH FLOOD"
+event_clean$EVTYPE[grep("waterspout|water.*spout", event_clean$EVTYPE, ignore.case=TRUE)] <- "WATERSPOUT"
+event_clean$EVTYPE[grep("coast.*flood|flood.*coast", event_clean$EVTYPE, ignore.case=TRUE)] <- "COASTAL FLOOD"
+event_clean$EVTYPE[grep("coast.*storm|storm.*coast", event_clean$EVTYPE, ignore.case=TRUE)] <- "TROPICAL STORM"
+event_clean$EVTYPE[grep("excess.*rain|rain.*excess", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY RAIN"
+event_clean$EVTYPE[grep("freez.*drizzle|drizzle.*freez", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE[grep("mixed.*precip|precip", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE[grep("record.*heat|heat.*record", event_clean$EVTYPE, ignore.case=TRUE)] <- "EXCESSIVE HEAT"
+event_clean$EVTYPE[grep("^ice$|^ice [FJOR]|black.*ice", event_clean$EVTYPE, ignore.case=TRUE)] <- "FROST/FREEZE"
+event_clean$EVTYPE[grep("freeze", event_clean$EVTYPE, ignore.case=TRUE)] <- "FROST/FREEZE"
+event_clean$EVTYPE[grep("drown", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH SURF"
+event_clean$EVTYPE[grep("freez.*spray", event_clean$EVTYPE, ignore.case=TRUE)] <- "FREEZING FOG"
+event_clean$EVTYPE[grep("frost|freeze", event_clean$EVTYPE, ignore.case=TRUE)] <- "FROST/FREEZE"
+event_clean$EVTYPE[grep("marine.*accident", event_clean$EVTYPE, ignore.case=TRUE)] <- "MARINE THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("ris.*water", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLASH FLOOD"
+event_clean$EVTYPE[grep("whirl.*wind|whirl", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("wintry", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE[grep("^ thunderstorm", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+
+event_clean$EVTYPE[grep("erosion", event_clean$EVTYPE, ignore.case=TRUE)] <- "COASTAL FLOOD"
+event_clean$EVTYPE[grep("blowing.*dust", event_clean$EVTYPE, ignore.case=TRUE)] <- "DUST STORM"
+event_clean$EVTYPE[grep("fire", event_clean$EVTYPE, ignore.case=TRUE)] <- "WILDFIRE"
+event_clean$EVTYPE[grep("coast.*surge|surge.*coast", event_clean$EVTYPE, ignore.case=TRUE)] <- "COASTAL FLOOD"
+event_clean$EVTYPE[grep("cool.*wet|excess.*wet", event_clean$EVTYPE, ignore.case=TRUE)] <- "WINTER WEATHER"
+event_clean$EVTYPE <- gsub("MIRCOBURST", "MICROBURST", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("microburst", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("dam.*break", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLOOD"
+event_clean$EVTYPE[grep("dust.*devil", event_clean$EVTYPE, ignore.case=TRUE)] <- "DUST DEVIL"
+event_clean$EVTYPE[grep("excess.*snow", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY SNOW"
+event_clean$EVTYPE[grep("downburst", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("funnel.*cloud", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("gradient.*wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "TROPICAL DEPRESSION"
+event_clean$EVTYPE[grep("gustnado", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("heavy.*mix", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY SNOW"
+event_clean$EVTYPE[grep("heavy.*shower", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY RAIN"
+event_clean$EVTYPE[grep("heavy.*swell|swell", event_clean$EVTYPE, ignore.case=TRUE)] <- "MARINE HIGH WIND"
+
+event_clean$EVTYPE[grep("high  wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH WIND"
+event_clean$EVTYPE[grep("hvy", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY RAIN"
+event_clean$EVTYPE[grep("lake.*snow", event_clean$EVTYPE, ignore.case=TRUE)] <- "LAKE-EFFECT SNOW"
+event_clean$EVTYPE[grep("land.*slump", event_clean$EVTYPE, ignore.case=TRUE)] <- "DEBRIS FLOW"
+event_clean$EVTYPE[grep("land.*spout", event_clean$EVTYPE, ignore.case=TRUE)] <- "DUST DEVIL"
+event_clean$EVTYPE <- gsub("LIGHTING", "LIGHTNING", ignore.case=TRUE, event_clean$EVTYPE)
+event_clean$EVTYPE[grep("non.*wind", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH WIND"
+
+event_clean$EVTYPE[grep("rain", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY RAIN"
+event_clean$EVTYPE[grep("record.*snow", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAVY SNOW"
+event_clean$EVTYPE[grep("rock.*slide", event_clean$EVTYPE, ignore.case=TRUE)] <- "DEBRIS FLOW"
+event_clean$EVTYPE[grep("rogue.*wave|wave", event_clean$EVTYPE, ignore.case=TRUE)] <- "HIGH SURF"
+event_clean$EVTYPE[grep("seiche", event_clean$EVTYPE, ignore.case=TRUE)]
+event_clean$EVTYPE[grep("turbulence", event_clean$EVTYPE, ignore.case=TRUE)] <- "FLOOD"
+event_clean$EVTYPE[grep("^storm.*wind|^thunde|^thud|^thun", event_clean$EVTYPE, ignore.case=TRUE)] <- "THUNDERSTORM WIND"
+event_clean$EVTYPE[grep("urban", event_clean$EVTYPE, ignore.case=TRUE)] <-"FLASH FLOOD"
+event_clean$EVTYPE[grep("warm", event_clean$EVTYPE, ignore.case=TRUE)] <- "HEAT"
+event_clean$EVTYPE[grep("lake.*flood", event_clean$EVTYPE, ignore.case=TRUE)] <- "LAKESHORE FLOOD"
+```
+##### Now I look at the cleaned list and look for any events that are not categorized.
+##### Row 173 is labeled "?". Label is trivial.
+```{r, echo=TRUE}
+event_clean <- event_clean[-173,]
+```
+##### Row 174 "Apache County" doesn't have a category.
+```{r, echo=TRUE}
+event_clean <- event_clean[-174,]
+```
+##### Row 290 is labeled "High". Label is ambiguous.
+```{r, echo=TRUE}
+event_clean <- event_clean[-289,]
+```
+##### Row 351 is labeled "Other". It doesn't belong in any category.
+```{r, echo=TRUE}
+event_clean <- event_clean[-350,]
+```
+##### Row 351 is labeled "Other". It doesn't belong in any category.
+```{r, echo=TRUE}
+event_clean <- event_clean[-350,]
+```
+
+##### Get the sum of fatalities, injuries, property damage estimate and crop damage estimate grouped by event type.
+```{r, echo=TRUE}
+event_clean_grouped <- event_clean %>%
+        group_by(EVTYPE) %>%
+        summarise_each(funs(sum), FATALITIES, INJURIES, PROPDMGEST, CROPDMGEST)
+```
+#### Sort events in descending order by fatality and injury counts.
+```{r, echo=TRUE}
+event_fi_sorted <- event_clean_grouped %>%
+        rename() %>%
+        mutate(FI = FATALITIES + INJURIES) %>%
+        arrange(desc(FI))
+```
+#### Sort events in descending order by property damage and crop damage estimate.
+````{r, echo=TRUE}
+event_pc_sorted <- event_clean_grouped %>%
+        rename() %>%
+        mutate(PC = PROPDMGEST + CROPDMGEST) %>%
+        arrange(desc(PC))
+```
+## Results:
+```{r, echo=TRUE}
+# Bar graph showing number of fatalities and injuries with respect to storm events
+event_pop_health <- melt(event_fi_sorted[1:10,], id="EVTYPE", measure=c("FATALITIES", "INJURIES"))
+g <- ggplot(event_pop_health, aes(EVTYPE, value, fill=variable))
+g + geom_bar(stat="identity", position="dodge") +
+        theme(axis.text.x  = element_text(angle=90, size=10)) +
+        theme(title = element_text(size=10)) +
+        xlab("Storm event") +
+        ylab("Counts") +
+        ggtitle("Number of fatalities and injuries in storm events during 1950-2011")
+```
+
+#### Looking at the bar graph, a red bar shows fatalities and a blue bar shows injuries.  It's apparent from the graph that Tornado is #1 in both the fatality and injury counts.  5,661 fatality cases and 91,407 injury counts are the most in both categories.  Other notable storm events with high fatality counts are Thunderstorm Wind, Excessive Heat and Flood.  Excessive Heat has the second most injury counts.  My analysis shows that Tornado is the most harmful event with respect to population health.
+```{r, echo=TRUE}
+# Bar graph showing property damage estimate and crop damage estimate with respect to storm events
+event_crop_dmg <- melt(event_pc_sorted[1:10,], id="EVTYPE", measure=c("PROPDMGEST", "CROPDMGEST"))
+h <- ggplot(event_crop_dmg, aes(EVTYPE, value, fill=variable))
+h + geom_bar(stat="identity", position="dodge") +
+        theme(axis.text.x = element_text(angle=90, size=10)) +
+        theme(title = element_text(size=10)) +
+        xlab("Storm event") +
+        ylab("Estimate ($)") +
+        ggtitle("Estimate of property damage and crop damage in storm events during 1950-2011")
+```
+
+#### Looking at the bar graph, a red bar shows property damage estimate and a blue bar shows crop damage estimate.  Flood is the #1 in property damage cause with $150,229,813 and drought is the #1 in crop damage cause with $10,856,314.  Other notable events with high property damage is Hurricane (Typhoon), Storm Surge/Tide and Tornado.  Flood has the second highest crop damage estimate.  My analysis shows that Flood has the greatest economic consequences.
